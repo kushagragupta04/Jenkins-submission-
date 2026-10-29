@@ -1,42 +1,51 @@
 # FestPass: campus event registration + Jenkins
 
-This is a deliberately failing **diagnostic starter**, not a finished submission. It manages
+This is a completed **diagnostic starter** for the one-hour Jenkins assessment. It manages
 multiple events, seat limits, student registrations, cancellations, and local
-file persistence. For the **one-hour Jenkins assessment**, create the SCM job,
-add the missing polling trigger, investigate test failures, and demonstrate
-an automatic red build followed by an automatic green build after your fix.
-Read **ASSIGNMENT.md** for exact instructions and the 100-point rubric.
-All application features and tests are supplied; no new Java feature is required.
-The starter Jenkinsfile intentionally has no `triggers` block.
-Fill `submission.properties` with your instructor-issued class/challenge codes before
-building in Jenkins. The alias comes automatically from the checked-out commit's
-Git author name (`git log -1 --format=%an`), not from this file.
-No physical-machine uniqueness or authorship guarantee
-is claimed by the accompanying evidence CSV.
+file persistence. The seeded booking cancellation defect has been diagnosed and fixed,
+all 28 supplied tests pass, and the `Jenkinsfile` is configured with the required
+`pollSCM` trigger.
 
-Use synthetic student IDs only, such as `S1`. Do not enter real student records.
+## Project overview
 
-## Requirements
+- `FestPass.java`: CLI parsing, output, exit codes, and load/mutate/save flow.
+- `BookingService.java`: validation, event management, and booking rules.
+- `BookingStore.java`: versioned UTF-8 TSV persistence and atomic file replacement.
+- `FestPassTest.java`: unit, persistence, CLI, corruption, and lock tests (28 tests).
+- `ci/Build.java`: compile all Java sources with `-Xlint:all -Werror`, test, package.
+- `ci/SmokeTest.java`: launch the real JAR seven times against temporary data.
+- `ci/BuildEvidence.java`: records pseudonymous submission evidence for both outcomes.
+- `Jenkinsfile`: Checkout -> Submission setup -> Test -> Build JAR -> Smoke test JAR -> Save artifact; always archive evidence afterward.
 
-Full JDK 21, Git, an editor, and the separate Jenkins setup folder.
-No Maven, Gradle, Docker, database, web framework, or cloud account is needed.
-Before-class software setup is in `Student_Prerequisites_Standalone.pdf`.
-The code is introduced during the lecture, not required for preparation.
+## Prerequisites
 
-## Build and run
+- Full JDK 21 (64-bit); not just a JRE.
+- Command-line Git, including `git daemon`.
+- No Maven, Gradle, Docker, database, web framework, or cloud account is needed.
 
-Open a terminal inside `festpass-java`. Start with a freshly extracted project:
+## Setup instructions
+
+```text
+cd festpass-java
+git init -b main
+git add .
+git commit -m "Add diagnostic FestPass starter"
+```
+
+## How to run the tests
 
 ```text
 java ci/Build.java verify
 ```
 
-**Expect this to fail its tests initially.** Do not run `package` to bypass the
-failure. Use Jenkins Test Result and the existing assertions to diagnose it.
-After your fix passes all 28 tests, continue:
+This compiles main and test sources with `-Xlint:all -Werror`, runs the 28 tests,
+writes `build/test-results/TEST-FestPass.xml`, and packages `build/festpass.jar`.
+
+**Expected result after the fix: 28 tests, 0 failures, BUILD SUCCESS.**
+
+## How to run the application
 
 ```text
-java ci/SmokeTest.java
 java -jar build/festpass.jar help
 java -jar build/festpass.jar add-event java "Java Workshop" 2
 java -jar build/festpass.jar add-event music "Campus Music" 1
@@ -50,98 +59,63 @@ java -jar build/festpass.jar roster java
 java -jar build/festpass.jar summary
 ```
 
-The repaired app must pass **28 tests**. The first `book java S3` deliberately reports
-SOLD OUT and exits with code 2; continue with cancellation, then retry.
-Final summary: 2 events, 2 booked seats, 1 available seat. Running `list`
-in a new terminal shows the same saved data.
+The first `book java S3` deliberately reports SOLD OUT and exits with code 2; after
+cancellation the retry succeeds. Final summary: 2 events, 2 booked seats, 1 available seat.
+Running `list` in a new terminal shows the same saved data.
 
-The default file is `data/festpass.tsv`, relative to your working directory.
-For an independent run, put `--data FILE` before the command:
+## Jenkins pipeline configuration
 
-```text
-java -jar build/festpass.jar --data data/second-demo.tsv add-event java "Java Workshop" 2
+The `Jenkinsfile` is a standard Pipeline script from SCM:
+
+- Agent: `student-laptop` (a separate local build agent).
+- SCM: Git, repository `git://127.0.0.1:9418/festpass-java`, branch `*/main`, script path `Jenkinsfile`.
+- `triggers { pollSCM('* * * * *') }` checks Git once per minute and builds on detected
+  changes, not on every timer tick. This is the only required pipeline change.
+- Stages: Checkout -> Submission setup -> Test -> Build JAR -> Smoke test JAR -> Save artifact.
+- A failed Test stage blocks Build JAR, Smoke test JAR, and Save artifact. The always-run
+  `post` block still archives `build/submission-evidence.csv`.
+
+## Original defect and fix
+
+**Defect:** `BookingService.cancel()` validated that the student had an existing booking
+but never removed it. The student stayed on the roster and the seat was never freed, so a
+subsequent booking still saw the event as full.
+
+```java
+// Before (broken)
+if (!event.students.contains(studentId)) {
+    throw new IllegalArgumentException("No booking for student: " + studentId);
+}
 ```
 
-Events cannot be added twice. If repeating the walkthrough, choose a new data
-file or remove only your known demo data file after stopping all commands.
-The `data` directory is ignored by Git; do not commit personal or runtime data.
-
-## Commands and rules
-
-| Command | Behavior |
-|---|---|
-| `add-event ID "TITLE" CAPACITY` | Unique event ID; capacity 1-10000; title 1-80 characters. |
-| `list` | Show events, bookings, capacity, and available seats. |
-| `book EVENT STUDENT` | One booking per student per event; reject duplicates and full events. |
-| `cancel EVENT STUDENT` | Remove an existing booking and free its seat; reject missing bookings. |
-| `roster EVENT` | Show students in registration order. |
-| `summary` | Show event count and total booked/available seats. |
-
-IDs are case-sensitive and use 1-32 ASCII letters, digits, underscores, or
-hyphens. The same student may register for different events.
-Exit codes: **0** success, **2** invalid input/business-rule rejection,
-**3** storage failure. Errors go to stderr and do not claim success.
-
-## Read the architecture
-
-- `FestPass.java`: CLI parsing, output, exit codes, and load/mutate/save flow.
-- `BookingService.java`: validation, event management, and booking rules.
-- `BookingStore.java`: versioned UTF-8 TSV persistence and atomic file replacement.
-- `FestPassTest.java`: unit, persistence, CLI, corruption, and lock tests.
-- `ci/Build.java`: compile all Java sources with `-Xlint:all -Werror`, test, package.
-- `ci/SmokeTest.java`: launch the real JAR seven times against temporary data.
-- `ci/BuildEvidence.java`: records pseudonymous submission evidence for both outcomes.
-- `Jenkinsfile`: Checkout -> Submission setup -> Test -> Build JAR -> Smoke test JAR -> Save artifact; always archive evidence afterward.
-
-Persistence format: `FESTPASS<TAB>1` header; `EVENT<TAB>ID<TAB>TITLE<TAB>CAPACITY`
-records followed by `BOOKING<TAB>EVENT_ID<TAB>STUDENT_ID` records.
-Titles cannot contain tabs/newlines. Bad records, unknown versions, duplicate
-bookings, and over-capacity files are rejected instead of silently reset.
-
-The CLI holds a sidecar file lock throughout each load/change/save operation.
-It writes a temporary file in the same directory and atomically replaces the
-store; unsupported atomic moves fail explicitly. Use a local disk, not a network
-share or synchronized folder. Lock files may remain on disk; the OS lock, not
-the file's presence, determines whether a command is active. Always use the same
-data path, not alternate symlink aliases.
-
-This remains a teaching CLI: no authentication, distributed database, web UI,
-payment system, or production reservation guarantee is claimed.
-
-## Make the first commit and connect Jenkins
-
-```text
-git init -b main
-git add .
-git commit -m "Add FestPass starter and pipeline"
+```java
+// After (fixed)
+if (!event.students.remove(studentId)) {
+    throw new IllegalArgumentException("No booking for student: " + studentId);
+}
 ```
 
-If Git asks for identity, set your own repository-local `user.name` and
-`user.email`, then retry. No GitHub account or push is needed.
+Because `Registration.students` is a `LinkedHashSet`, `remove()` both deletes the student
+and frees the seat, and the change is persisted by `BookingStore.save()`. The fix is the
+smallest application-level change; no tests were modified, weakened, or removed.
 
-Follow `jenkins-lab/README.md` for the local Git server, Jenkins controller,
-separate agent, and Pipeline-from-SCM job. Add and commit the polling trigger
-as described in **ASSIGNMENT.md** and guide section 7. Then run **Build Now once**
-to load that Jenkinsfile and establish polling. Without your trigger, the
-starter job does not automatically build new commits. Later local commits should trigger builds
-within approximately 1-2 minutes. Saving a file alone is not enough.
+## Test results (verified locally)
 
-## Diagnose the seeded failure, then recover
+- `java ci/Build.java verify`: **28 tests, 0 failures**, `build/festpass.jar` generated.
+- `java ci/SmokeTest.java`: seven real-JAR commands pass (add-event, book, sold-out,
+  roster, cancel, book, summary).
+- CLI walkthrough verified: booking, cancellation, seat reuse, roster, summary, and
+  persistence across separate command invocations.
 
-The initial source already contains a defect. Do not introduce another bug.
-Capture an automatic failing run after your harmless help-text change.
-Use failed assertions to locate and fix the faulty business rule. Commit
-your repair, then observe an automatic successful run with all tests passing.
+## Known limitations and steps that still require manual execution
 
-The failed run must not publish a new JAR, but must publish
-`submission-evidence.csv`. Older successful JARs remain older artifacts.
-Do not delete tests or weaken the pipeline to make it green.
-
-The tests use a dependency-free runner that writes JUnit-compatible XML, not
-the JUnit test framework. New test files are compiled automatically, but new
-test cases must be registered in the `FestPassTest` runner.
-
-`java ci/Build.java test` compiles and tests without packaging.
-`java ci/Build.java package` packages without tests; Jenkins runs it only after
-the Test stage succeeds. `verify` tests and packages locally. Run the separate
-smoke command after `verify` to validate the actual JAR.
+- **Jenkins runtime:** This repository contains the configured `Jenkinsfile` and setup
+  scripts, but the Jenkins controller, `student-laptop` agent, and local Git server were
+  not run end to end in this environment. The pipeline is syntactically valid and follows
+  the supplied specification; it has not been exercised to produce live build logs.
+- **Automatic SCM-triggered builds:** Not verified without a running Jenkins. The
+  `pollSCM('* * * * *')` trigger is committed and correct; a manual bootstrap build plus
+  subsequent commits should produce automatic red/green builds in the lab environment.
+- **Evidence CSVs:** `BuildEvidence.java` requires the Jenkins `JOB_NAME` and
+  `BUILD_NUMBER` environment variables, so `submission-evidence.csv` can only be produced
+  inside a running Jenkins build.
