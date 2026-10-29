@@ -65,7 +65,7 @@ public final class BookingService {
     public void cancel(String eventId, String studentId) {
         validateId(studentId);
         Registration event = requireEvent(eventId);
-        if (!event.students.contains(studentId)) {
+        if (!event.students.remove(studentId)) {
             throw new IllegalArgumentException("No booking for student: " + studentId);
         }
     }
